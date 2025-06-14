@@ -1,227 +1,126 @@
--- Servidor Hop para A Universal Time (Roblox)
--- ID do Jogo: 5130598377
--- Versão Corrigida
+             -- Servidor Hop para A Universal Time (Roblox)
+-- Versão: 1.0
+-- Game ID: 5130598377
 
 local Players = game:GetService("Players")
-local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
-local LocalPlayer = Players.LocalPlayer
+local TeleportService = game:GetService("TeleportService")
 
--- Verifica se o jogo é A Universal Time
-if game.PlaceId ~= 5130598377 then
-    warn("Este script é apenas para A Universal Time (ID: 5130598377)")
-    return
-end
-
--- Tenta carregar a Rayfield
-local Rayfield = nil
-local success, errorMsg = pcall(function()
-    Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexware/Rayfield/main/source'))()
-end)
-
-if not success or not Rayfield then
-    warn("Falha ao carregar Rayfield: " .. tostring(errorMsg))
-    -- Continua sem interface, apenas com funcionalidades básicas
-end
+local localPlayer = Players.LocalPlayer
+local placeId = 5130598377 -- ID do jogo A Universal Time
 
 -- Configurações
-local settings = {
-    MIN_PLAYERS = 5,
-    MAX_PLAYERS = 15,
-    MAX_PING = 200,
-    DELAY = 30,
-    AUTO_HOP = true,
-    PREFER_PRIVATE = false
-}
+local MIN_PLAYERS = 5  -- Mínimo de jogadores para ficar no servidor
+local MAX_PLAYERS = 12 -- Máximo de jogadores para ficar no servidor
+local HOP_DELAY = 30   -- Tempo entre tentativas de hop (em segundos)
+local MAX_RETRIES = 5  -- Máximo de tentativas antes de esperar
 
--- Função para criar a interface (se Rayfield estiver disponível)
-local function createUI()
-    if not Rayfield then return end
-    
-    local Window = Rayfield:CreateWindow({
-        Name = "AUT Server Hop (Corrigido)",
-        LoadingTitle = "A Universal Time Server Hopper",
-        LoadingSubtitle = "Versão Corrigida",
-        ConfigurationSaving = {
-            Enabled = true,
-            FolderName = "AUT_Hopper_Fixed",
-            FileName = "Config"
-        },
-        Discord = {
-            Enabled = false,
-            Invite = "noinvitelink",
-            RememberJoins = true
-        },
-        KeySystem = false
-    })
-
-    local MainTab = Window:CreateTab("Principal", 4483362458)
-    local SettingsTab = Window:CreateTab("Configurações", 4483362458)
-    
-    -- Elementos da UI
-    MainTab:CreateSection("Status do Servidor")
-    local playerCountLabel = MainTab:CreateLabel("Jogadores: " .. #Players:GetPlayers())
-    local pingLabel = MainTab:CreateLabel("Ping: Calculando...")
-    local serverIdLabel = MainTab:CreateLabel("Server ID: " .. game.JobId)
-    
-    MainTab:CreateSection("Controles")
-    MainTab:CreateButton({
-        Name = "Trocar de Servidor Agora",
-        Callback = function()
-            hopServer()
-        end,
-    })
-
-    MainTab:CreateToggle({
-        Name = "Auto Hop",
-        CurrentValue = settings.AUTO_HOP,
-        Flag = "AutoHopToggle",
-        Callback = function(value)
-            settings.AUTO_HOP = value
-        end,
-    })
-
-    -- Configurações
-    SettingsTab:CreateSection("Preferências")
-    SettingsTab:CreateSlider({
-        Name = "Mínimo de Jogadores",
-        Range = {1, 30},
-        Increment = 1,
-        Suffix = "jogadores",
-        CurrentValue = settings.MIN_PLAYERS,
-        Flag = "MinPlayersSlider",
-        Callback = function(value)
-            settings.MIN_PLAYERS = value
-        end,
-    })
-
-    SettingsTab:CreateSlider({
-        Name = "Máximo de Jogadores",
-        Range = {1, 30},
-        Increment = 1,
-        Suffix = "jogadores",
-        CurrentValue = settings.MAX_PLAYERS,
-        Flag = "MaxPlayersSlider",
-        Callback = function(value)
-            settings.MAX_PLAYERS = value
-        end,
-    })
-
-    -- Atualiza a UI periodicamente
-    coroutine.wrap(function()
-        while true do
-            playerCountLabel:Set("Jogadores: " .. #Players:GetPlayers())
-            pingLabel:Set("Ping: " .. math.floor(getPing()) .. "ms")
-            wait(2)
-        end
-    end)()
-end
-
--- Função para obter ping
-local function getPing()
-    local success, ping = pcall(function()
-        return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
-    end)
-    return success and ping or 999
-end
-
--- Função para obter lista de servidores com tratamento de erros
-local function getServerList()
+-- Função para obter a lista de servidores
+local function getServers()
     local success, result = pcall(function()
-        local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
-        return HttpService:JSONDecode(game:HttpGet(url))
+        return HttpService:JSONDecode(game:HttpGet(
+            "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+        ))
     end)
     
     if success and result and result.data then
         return result.data
     else
-        warn("Erro ao obter lista de servidores: " .. tostring(result))
+        warn("Falha ao obter servidores: " .. tostring(result))
         return {}
     end
 end
 
--- Função para encontrar o melhor servidor
-local function findBestServer()
-    local servers = getServerList()
-    if #servers == 0 then return nil end
-    
-    local bestServer = nil
-    local currentPlayers = #Players:GetPlayers()
+-- Função para filtrar servidores adequados
+local function filterServers(servers)
+    local goodServers = {}
     
     for _, server in ipairs(servers) do
-        if server.id ~= game.JobId then
-            local playerCount = server.playing or 0
-            local maxPlayers = server.maxPlayers or 30
-            
-            if playerCount >= settings.MIN_PLAYERS and 
-               playerCount <= settings.MAX_PLAYERS and 
-               playerCount < maxPlayers then
-                
-                if not bestServer or playerCount < (bestServer.playing or math.huge) then
-                    bestServer = server
-                end
+        if server.playing and server.id ~= game.JobId then
+            if server.playing >= MIN_PLAYERS and server.playing <= MAX_PLAYERS then
+                table.insert(goodServers, server)
             end
         end
     end
     
-    return bestServer
+    -- Ordenar por população (mais próximo do ideal primeiro)
+    table.sort(goodServers, function(a, b)
+        local aDiff = math.abs(a.playing - (MIN_PLAYERS + MAX_PLAYERS)/2)
+        local bDiff = math.abs(b.playing - (MIN_PLAYERS + MAX_PLAYERS)/2)
+        return aDiff < bDiff
+    end)
+    
+    return goodServers
 end
 
 -- Função principal para trocar de servidor
-local function hopServer()
-    print("Iniciando procura por servidor melhor...")
+local function serverHop()
+    local retries = 0
     
-    local bestServer = findBestServer()
-    
-    if bestServer then
-        print("Servidor encontrado! Jogadores:", bestServer.playing)
+    while retries < MAX_RETRIES do
+        retries = retries + 1
+        print(`Tentativa de hop #{retries}`)
         
-        if Rayfield then
-            Rayfield:Notify({
-                Title = "Trocando de Servidor",
-                Content = "Encontrado servidor com " .. bestServer.playing .. " jogadores",
-                Duration = 3,
-                Image = 4483362458,
-            })
-        end
+        local servers = getServers()
+        local goodServers = filterServers(servers)
         
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, bestServer.id, LocalPlayer)
-    else
-        print("Nenhum servidor adequado encontrado.")
-        
-        if Rayfield then
-            Rayfield:Notify({
-                Title = "Nenhum Servidor Encontrado",
-                Content = "Tente ajustar as configurações",
-                Duration = 3,
-                Image = 4483362458,
-            })
-        end
-    end
-end
-
--- Verifica se deve trocar de servidor
-local function shouldHop()
-    local playerCount = #Players:GetPlayers()
-    local ping = getPing()
-    
-    return playerCount > settings.MAX_PLAYERS or ping > settings.MAX_PING
-end
-
--- Inicialização
-createUI()
-
--- Loop principal para auto hop
-coroutine.wrap(function()
-    while true do
-        if settings.AUTO_HOP and shouldHop() then
-            local success, err = pcall(hopServer)
+        if #goodServers > 0 then
+            local targetServer = goodServers[1]
+            print(`Encontrado servidor adequado: {targetServer.id} com {targetServer.playing} jogadores`)
+            
+            local success, errorMsg = pcall(function()
+                TeleportService:TeleportToPlaceInstance(placeId, targetServer.id, localPlayer)
+            end)
+            
             if not success then
-                warn("Erro no auto hop: " .. tostring(err))
+                warn("Falha ao teleportar: " .. errorMsg)
+            else
+                return -- Sucesso ao iniciar teleporte
             end
+        else
+            print("Nenhum servidor adequado encontrado. Tentando novamente...")
         end
-        wait(settings.DELAY)
+        
+        wait(HOP_DELAY)
     end
-end)()
+    
+    warn("Máximo de tentativas alcançado. Tente novamente mais tarde.")
+end
 
-print("AUT Server Hop iniciado com sucesso!")
+-- Interface simples (opcional)
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Parent = game:GetService("CoreGui")
+
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.new(0, 200, 0, 100)
+Frame.Position = UDim2.new(0.5, -100, 0.5, -50)
+Frame.BackgroundTransparency = 0.5
+Frame.BackgroundColor3 = Color3.new(0, 0, 0)
+Frame.Parent = ScreenGui
+
+local Title = Instance.new("TextLabel")
+Title.Text = "AUT Server Hop"
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundTransparency = 1
+Title.TextColor3 = Color3.new(1, 1, 1)
+Title.Parent = Frame
+
+local HopButton = Instance.new("TextButton")
+HopButton.Text = "Hop Servidor"
+HopButton.Size = UDim2.new(0.8, 0, 0, 30)
+HopButton.Position = UDim2.new(0.1, 0, 0.5, 0)
+HopButton.Parent = Frame
+
+HopButton.MouseButton1Click:Connect(serverHop)
+
+-- Auto-hop opcional (descomente se quiser hop automático)
+-- while true do
+--     local players = #Players:GetPlayers()
+--     if players < MIN_PLAYERS or players > MAX_PLAYERS then
+--         serverHop()
+--     end
+--     wait(60) -- Verificar a cada minuto
+-- end
+
+print("Script de Server Hop para A Universal Time carregado!")
+print("Clique no botão 'Hop Servidor' para trocar de servidor.")
